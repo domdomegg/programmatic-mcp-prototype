@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+generated/workspace/*
+generated/skills/*
+!generated/workspace/.gitkeep
+!generated/skills/README.md
+*.log
+.DS_Store
