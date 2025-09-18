@@ -84,6 +84,7 @@ export class MCPProxyServer {
           transport = new StdioClientTransport({
             command: serverConfig.command,
             args: serverConfig.args,
+            stderr: 'ignore',
           });
           await client.connect(transport);
         }
