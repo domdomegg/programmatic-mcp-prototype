@@ -19,6 +19,12 @@ const servers: Config = {
       args: ['./src/servers/container-runner/index.ts'],
       description: 'Execute TypeScript in isolated container',
     },
+    {
+      name: 'time',
+      command: 'uvx',
+      args: ['mcp-server-time'],
+      description: 'Get the current time',
+    },
     // needs auth
     // {
     //   name: 'asana',

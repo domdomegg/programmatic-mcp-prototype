@@ -35,7 +35,7 @@ You have access to two meta-tools:
 - search_tools: Search for available tools by query or server name
 - execute_tool: Execute any discovered tool by its namespaced name (e.g., "bash__read_file")
 
-IMPORTANT: You must use search_tools to discover what tools are available before using execute_tool.
+If you need a tool to answer the query, use search_tools to discover what tools are available before using execute_tool.
 Tools are namespaced as "server__toolname" (e.g., "bash__list_directory", "container__execute").
 
 ## Special Directories
