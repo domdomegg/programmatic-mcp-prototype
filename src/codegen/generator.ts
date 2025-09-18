@@ -34,7 +34,7 @@ export class CodeGenerator {
   }
 
   private async generateServerFile(serverName: string, tools: Tool[]) {
-    const serverDir = path.join('./generated/servers', serverName);
+    const serverDir = path.join('./model_accessible_files/generated/servers', serverName);
     await fs.mkdir(serverDir, { recursive: true });
 
     for (const tool of tools) {
@@ -65,28 +65,7 @@ export class CodeGenerator {
           },
         ],
         returnType: `Promise<${outputType}>`,
-        statements: `
-  const result = await callMCPTool('${tool.name}', input);
-  
-  if (result.isError) {
-    throw new Error(\`Tool ${tool.name} failed: \${result.content[0]?.text || 'Unknown error'}\`);
-  }
-  
-  if (result.structuredContent) {
-    return result.structuredContent as ${outputType};
-  }
-  
-  const textContent = result.content.find(c => c.type === 'text');
-  if (textContent && textContent.type === 'text') {
-    try {
-      return JSON.parse(textContent.text);
-    } catch {
-      return textContent.text as any;
-    }
-  }
-  
-  return undefined as any;
-        `.trim(),
+        statements: `return callMCPTool<${outputType}>('${tool.name}', input);`,
       });
 
       // Add JSDoc comment
@@ -113,7 +92,7 @@ export class CodeGenerator {
   }
 
   private async generateIndexFile(serverNames: string[]) {
-    const indexFile = this.project.createSourceFile('./generated/index.ts', '', { overwrite: true });
+    const indexFile = this.project.createSourceFile('./model_accessible_files/generated/index.ts', '', { overwrite: true });
     
     for (const serverName of serverNames) {
       indexFile.addExportDeclaration({

@@ -55,50 +55,19 @@ async function executeInContainer(code: string, timeout: number = 30000): Promis
       JSON.stringify(packageJson, null, 2)
     );
 
-    // Copy generated TypeScript bindings and workspace
-    await fs.cp('./generated', path.join(workDir, 'generated'), { recursive: true });
+    // Copy model accessible files (generated bindings, client, and workspace)
+    await fs.cp('./model_accessible_files', path.join(workDir, 'model_accessible_files'), { recursive: true });
     await fs.cp('./tsconfig.json', path.join(workDir, 'tsconfig.json'));
-    
-    // Create a simple MCP client that connects back to our proxy
-    const clientCode = `
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-
-let mcpClient: Client | null = null;
-
-export async function getMCPClient(): Promise<Client> {
-  if (mcpClient) return mcpClient;
-
-  mcpClient = new Client({
-    name: 'container-client',
-    version: '1.0.0',
-  }, {
-    capabilities: {},
-  });
-
-  const transport = new StdioClientTransport({
-    command: 'node',
-    args: ['${process.cwd()}/src/index.ts', '--proxy'],
-  });
-
-  await mcpClient.connect(transport);
-  return mcpClient;
-}
-
-export async function callMCPTool(name: string, args: any): Promise<CallToolResult> {
-  const client = await getMCPClient();
-  return client.callTool({ name, arguments: args });
-}
-`;
-    await fs.writeFile(path.join(workDir, 'generated', 'client.ts'), clientCode);
 
     const container = await docker.createContainer({
       Image: 'mcp-runner:latest',
       Cmd: ['tsx', 'index.ts'],
       WorkingDir: '/workspace',
       HostConfig: {
-        Binds: [`${workDir}:/workspace:ro`],
+        Binds: [
+          `${workDir}:/workspace`,
+          `${path.join(workDir, 'model_accessible_files', 'generated')}:/workspace/model_accessible_files/generated:ro`,
+        ],
         Memory: 512 * 1024 * 1024,
         NetworkMode: 'none',
       },

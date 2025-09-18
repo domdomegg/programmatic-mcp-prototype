@@ -1,9 +1,13 @@
 node_modules/
 dist/
 .env
-generated/workspace/*
-generated/skills/*
-!generated/workspace/.gitkeep
-!generated/skills/README.md
+model_accessible_files/generated/
+model_accessible_files/workspace/*
+!model_accessible_files/workspace/README.md
+!model_accessible_files/workspace/skills/
+model_accessible_files/workspace/skills/*
+!model_accessible_files/workspace/skills/README.md
+!model_accessible_files/workspace/skills/waitFor.ts
+!model_accessible_files/workspace/skills/analyzeFile.ts
 *.log
 .DS_Store

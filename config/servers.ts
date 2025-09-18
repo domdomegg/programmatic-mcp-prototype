@@ -1,9 +1,9 @@
 const servers: Config = {
   servers: [
     {
-      name: 'bash',
-      command: 'npx',
-      args: ['-y', '@wonderwhy-er/desktop-commander'],
+      name: 'wcgw',
+      command: 'uv',
+      args: ['tool', 'run', '--python', '3.12', 'wcgw@5.4.3'],
       description: 'File system and bash command execution',
     },
     // {
@@ -20,8 +20,8 @@ const servers: Config = {
     },
   ],
   paths: {
-    workspace: './generated/workspace',
-    skills: './generated/skills',
+    workspace: './model_accessible_files/workspace',
+    skills: './model_accessible_files/workspace/skills',
   },
 } as const;
 

@@ -34,10 +34,12 @@ export class MCPProxyServer {
   }
 
   async initialize() {
+    console.log('Starting MCP client...');
     this.setupHandlers();
     await this.server.connect(new StdioServerTransport());
     await this.connectBackendServers();
     await this.generateToolBindings();
+    console.log('MCP client set up ✓');
   }
 
   private setupHandlers() {
