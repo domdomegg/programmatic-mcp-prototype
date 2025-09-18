@@ -22,19 +22,20 @@ const servers: Config = {
       command: 'uvx',
       args: ['mcp-server-time'],
     },
-    // needs auth
-    // {
-    //   name: 'asana',
-    //   url: 'https://mcp.asana.com/sse',
-    //
-    // },
+    {
+      name: 'asana',
+      url: 'https://mcp.asana.com/sse',
+      transport: 'sse',
+    },
     {
       name: 'context7',
       url: 'https://mcp.context7.com/mcp',
+      transport: 'http',
     },
     {
       name: 'awsknowledge',
       url: 'https://knowledge-mcp.global.api.aws',
+      transport: 'http',
     }
   ],
   paths: {
@@ -52,6 +53,7 @@ export type LocalServerConfig = {
 export type RemoteServerConfig = {
   name: string;
   url: string;
+  transport: 'sse' | 'http';
 };
 
 export type ServerConfig = LocalServerConfig | RemoteServerConfig;

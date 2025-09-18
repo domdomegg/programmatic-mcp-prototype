@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -13,6 +14,7 @@ import {
 import { CodeGenerator } from '../codegen/generator.js';
 import type { ServerConfig, Config } from '../../config/servers.js';
 import Anthropic from '@anthropic-ai/sdk';
+import { FileBasedOAuthProvider } from './oauth-provider.js';
 
 export class MCPProxyServer {
   private server: Server;
@@ -81,14 +83,45 @@ export class MCPProxyServer {
         if ('url' in serverConfig) {
           const url = new URL(serverConfig.url);
 
-          // Try StreamableHTTP first, fallback to SSE
-          try {
-            transport = new StreamableHTTPClientTransport(url);
-            await client.connect(transport);
-          } catch (error) {
-            console.error(`StreamableHTTP failed for ${serverConfig.name}, falling back to SSE:`, error);
-            transport = new SSEClientTransport(url);
-            await client.connect(transport);
+          // Create auth provider - it will be used if the server requires OAuth
+          const authProvider = new FileBasedOAuthProvider(
+            serverConfig.name,
+            'http://localhost:3000/oauth/callback'
+          );
+
+          // Use specified transport
+          if (serverConfig.transport === 'sse') {
+            transport = new SSEClientTransport(url, { authProvider });
+            try {
+              await client.connect(transport);
+            } catch (error: any) {
+              if (error?.message?.includes('Unauthorized')) {
+                console.error(`Completing OAuth flow for ${serverConfig.name}...`);
+                const code = await authProvider.getAuthorizationCode();
+                await transport.finishAuth(code);
+                // Create new transport and reconnect
+                transport = new SSEClientTransport(url, { authProvider });
+                await client.connect(transport);
+              } else {
+                throw error;
+              }
+            }
+          } else {
+            transport = new StreamableHTTPClientTransport(url, { authProvider });
+            try {
+              await client.connect(transport);
+            } catch (error: any) {
+              if (error?.message?.includes('Unauthorized')) {
+                console.error(`Completing OAuth flow for ${serverConfig.name}...`);
+                const code = await authProvider.getAuthorizationCode();
+                await transport.finishAuth(code);
+                // Create new transport and reconnect
+                transport = new StreamableHTTPClientTransport(url, { authProvider });
+                await client.connect(transport);
+              } else {
+                throw error;
+              }
+            }
           }
         } else {
           transport = new StdioClientTransport({

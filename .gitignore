@@ -11,3 +11,4 @@ model_accessible_files/workspace/skills/*
 !model_accessible_files/workspace/skills/analyzeFile.ts
 *.log
 .DS_Store
+.oauth
