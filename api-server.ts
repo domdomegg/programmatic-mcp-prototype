@@ -4,130 +4,46 @@
  */
 
 import { MCPProxyServer } from './src/mcp-proxy/server.js';
-import Anthropic from '@anthropic-ai/sdk';
+import { AgentCore } from './src/agent/core.js';
 import config from './config/servers.js';
 import * as http from 'http';
 import { URL } from 'url';
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string | any[];
-}
-
 class AgentAPI {
   private proxy!: MCPProxyServer;
-  private client!: Anthropic;
-  private conversation: Message[] = [];
+  private agent!: AgentCore;
 
   async initialize() {
     this.proxy = new MCPProxyServer(config);
     await this.proxy.initialize();
-
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
-
-    // Initialize conversation with system prompt
-    this.conversation.push({
-      role: 'user',
-      content: `You are an AI assistant with access to tools via MCP. 
-
-IMPORTANT: You have two special directories:
-- ${config.paths.workspace}: Use this to store any data, CSVs, files you create during execution
-- ${config.paths.skills}: Use this to build reusable TypeScript skills that compose tools
-
-When you want to execute TypeScript code, you can use the container__execute tool.`,
-    });
+    this.agent = new AgentCore(this.proxy, config);
   }
 
   async processMessage(userMessage: string): Promise<string> {
-    this.conversation.push({
-      role: 'user',
-      content: userMessage,
+    let response = '';
+
+    const result = await this.agent.processMessage(userMessage, (toolInfo) => {
+      console.log(`[API] Calling tool: ${toolInfo.name}`);
+
+      // Add tool result to response for debugging
+      response += `\n[Tool: ${toolInfo.name}]\n`;
+      if (toolInfo.result.structuredContent) {
+        response += JSON.stringify(toolInfo.result.structuredContent, null, 2) + '\n';
+      } else if (toolInfo.result.content[0]?.type === 'text') {
+        response += toolInfo.result.content[0].text + '\n';
+      }
     });
 
-    let response = '';
-    let shouldContinue = true;
-
-    while (shouldContinue) {
-      const tools = this.proxy.getToolSchemas();
-      
-      const claudeResponse = await this.client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8192,
-        messages: this.conversation,
-        tools: tools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          input_schema: tool.inputSchema,
-        })),
-      });
-
-      this.conversation.push({
-        role: 'assistant',
-        content: claudeResponse.content,
-      });
-
-      if (claudeResponse.stop_reason === 'tool_use') {
-        const toolResults = [];
-        
-        for (const content of claudeResponse.content) {
-          if (content.type === 'tool_use') {
-            console.log(`[API] Calling tool: ${content.name}`);
-            
-            try {
-              const result = await this.proxy.handleToolCall(
-                content.name,
-                content.input
-              );
-
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: content.id,
-                content: result.content,
-                is_error: result.isError,
-              });
-
-              // Add tool result to response for debugging
-              response += `\n[Tool: ${content.name}]\n`;
-              if (result.structuredContent) {
-                response += JSON.stringify(result.structuredContent, null, 2) + '\n';
-              } else if (result.content[0]?.type === 'text') {
-                response += result.content[0].text + '\n';
-              }
-            } catch (error: any) {
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: content.id,
-                content: [{ type: 'text', text: `Error: ${error.message}` }],
-                is_error: true,
-              });
-            }
-          }
-        }
-
-        this.conversation.push({
-          role: 'user',
-          content: toolResults,
-        });
-      } else {
-        shouldContinue = false;
-        const textContent = claudeResponse.content.find(c => c.type === 'text');
-        if (textContent && textContent.type === 'text') {
-          response += '\n' + textContent.text;
-        }
-      }
-    }
-
+    response += '\n' + result;
     return response.trim();
   }
 
   getTools() {
-    return this.proxy.getToolSchemas();
+    return this.agent.getToolSchemas();
   }
 
   async callTool(name: string, args: any) {
-    return this.proxy.handleToolCall(name, args);
+    return this.agent.callTool(name, args);
   }
 }
 
