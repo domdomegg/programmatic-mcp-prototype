@@ -12,12 +12,14 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { CodeGenerator } from '../codegen/generator.js';
 import type { ServerConfig, Config } from '../../config/servers.js';
+import Anthropic from '@anthropic-ai/sdk';
 
 export class MCPProxyServer {
   private server: Server;
   private clients: Map<string, Client> = new Map();
   private tools: Map<string, Tool> = new Map();
   private codegen: CodeGenerator;
+  private anthropicClient: Anthropic;
 
   constructor(private config: Config) {
     this.server = new Server(
@@ -31,8 +33,11 @@ export class MCPProxyServer {
         },
       }
     );
-    
+
     this.codegen = new CodeGenerator(config.paths);
+    this.anthropicClient = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
   }
 
   async initialize() {
@@ -57,6 +62,11 @@ export class MCPProxyServer {
   async connectBackendServers() {
     for (const serverConfig of this.config.servers) {
       try {
+        // Validate server name doesn't contain __
+        if (serverConfig.name.includes('__')) {
+          throw new Error(`Server name "${serverConfig.name}" cannot contain "__"`);
+        }
+
         const client = new Client(
           {
             name: `proxy-client-${serverConfig.name}`,
@@ -114,46 +124,24 @@ export class MCPProxyServer {
     if (name === 'search_tools') {
       return this.handleSearchTools(args);
     }
+    if (name === 'list_tool_names') {
+      return this.handleListToolNames(args);
+    }
+    if (name === 'get_tool_definition') {
+      return this.handleGetToolDefinition(args);
+    }
     if (name === 'execute_tool') {
       return this.handleExecuteTool(args);
     }
 
-    // Handle direct tool calls
-    const [serverName, toolName] = name.split('__');
-    const client = this.clients.get(serverName);
-
-    if (!client) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Server ${serverName} not found`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    try {
-      const result = await client.callTool({ name: toolName, arguments: args });
-      return result;
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error calling ${name}: ${error}`,
-          },
-        ],
-        isError: true,
-      };
-    }
+    // Handle direct tool calls - delegate to handleExecuteTool
+    return this.handleExecuteTool({ tool_name: name, arguments: args });
   }
 
-  private handleSearchTools(args: any): CallToolResult {
+  private async handleSearchTools(args: any): Promise<CallToolResult> {
     const query = args.query?.toLowerCase() || '';
     const serverFilter = args.server;
-    const limit = args.limit || 50;
+    const limit = args.limit;
 
     let tools = Array.from(this.tools.values());
 
@@ -162,20 +150,18 @@ export class MCPProxyServer {
       tools = tools.filter(tool => tool.name.startsWith(`${serverFilter}__`));
     }
 
-    // Search by query if specified
-    if (query) {
-      tools = tools.filter(tool =>
-        tool.name.toLowerCase().includes(query) ||
-        tool.description?.toLowerCase().includes(query)
-      );
-    }
+    // Use subagent to select relevant tools
+    const selectedToolNames = await this.selectToolsWithSubagent(query, serverFilter, tools);
 
-    // Apply limit
-    tools = tools.slice(0, limit);
+    // Get the full tool definitions for selected tools
+    const selectedTools = tools.filter(tool => selectedToolNames.includes(tool.name));
+
+    // Apply limit if specified
+    const finalTools = limit ? selectedTools.slice(0, limit) : selectedTools;
 
     const result = {
-      total: tools.length,
-      tools: tools.map(tool => ({
+      total: finalTools.length,
+      tools: finalTools.map(tool => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
@@ -187,6 +173,133 @@ export class MCPProxyServer {
         {
           type: 'text',
           text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async selectToolsWithSubagent(query: string, serverFilter: string | undefined, tools: Tool[]): Promise<string[]> {
+    const toolList = tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+    }));
+
+    const prompt = `You are a tool selection assistant. Your job is to analyze a list of available tools and select the ones that are most relevant to the user's query.
+
+User query: "${query || 'all tools'}"${serverFilter ? `\nServer filter: "${serverFilter}"` : ''}
+
+Available tools:
+${JSON.stringify(toolList, null, 2)}
+
+Please analyze the tools and return ONLY a JSON array of tool names that are relevant to the query. If the query is empty or "all tools", return all tool names.
+
+Your response must be ONLY a valid JSON array of strings, nothing else. For example:
+["tool1", "tool2", "tool3"]`;
+
+    try {
+      const response = await this.anthropicClient.messages.create({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+      });
+
+      const textContent = response.content.find(c => c.type === 'text');
+      if (textContent && textContent.type === 'text') {
+        const parsed = JSON.parse(textContent.text);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+
+      // Fallback: return all tool names if parsing fails
+      return tools.map(t => t.name);
+    } catch (error) {
+      console.error('Error in subagent tool selection:', error);
+      // Fallback: return all tool names
+      return tools.map(t => t.name);
+    }
+  }
+
+  private handleListToolNames(args: any): CallToolResult {
+    const serverFilter = args.server;
+    const keywords = args.keywords || [];
+    const limit = args.limit ?? 100;
+    let tools = Array.from(this.tools.values());
+
+    // Filter by server if specified
+    if (serverFilter) {
+      tools = tools.filter(tool => tool.name.startsWith(`${serverFilter}__`));
+    }
+
+    // Filter by keywords if specified
+    if (keywords.length > 0) {
+      tools = tools.filter(tool => {
+        const toolString = JSON.stringify({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }).toLowerCase();
+        return keywords.some((keyword: string) => toolString.includes(keyword.toLowerCase()));
+      });
+    }
+
+    // Apply limit
+    const limitedTools = tools.slice(0, limit);
+    const toolNames = limitedTools.map(tool => tool.name);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            tool_names: toolNames,
+            total: tools.length,
+            returned: toolNames.length,
+            truncated: tools.length > limit
+          }, null, 2),
+        },
+      ],
+    };
+  }
+
+  private handleGetToolDefinition(args: any): CallToolResult {
+    const toolName = args.tool_name;
+
+    if (!toolName) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: tool_name is required',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const tool = this.tools.get(toolName);
+
+    if (!tool) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error: Tool '${toolName}' not found`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          }, null, 2),
         },
       ],
     };
@@ -221,7 +334,10 @@ export class MCPProxyServer {
     }
 
     // Execute the tool by routing through handleToolCall
-    const [serverName, actualToolName] = toolName.split('__');
+    // Split on first __ only to handle tool names that contain __
+    const firstSeparator = toolName.indexOf('__');
+    const serverName = toolName.slice(0, firstSeparator);
+    const actualToolName = toolName.slice(firstSeparator + 2);
     const client = this.clients.get(serverName);
 
     if (!client) {
@@ -237,8 +353,7 @@ export class MCPProxyServer {
     }
 
     try {
-      const result = await client.callTool({ name: actualToolName, arguments: toolArgs });
-      return result;
+      return await client.callTool({ name: actualToolName, arguments: toolArgs }) as CallToolResult;
     } catch (error) {
       return {
         content: [
@@ -275,7 +390,7 @@ export class MCPProxyServer {
     return [
       {
         name: 'search_tools',
-        description: 'Search for available MCP tools. Use this to discover what tools you can execute.',
+        description: 'Search for available MCP tools using an AI agent to select the most relevant tools. Returns full tool definitions.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -289,14 +404,52 @@ export class MCPProxyServer {
             },
             limit: {
               type: 'number',
-              description: 'Maximum number of results to return (default: 50)',
+              description: 'Maximum number of results to return (optional, no default limit)',
             },
           },
         },
       },
       {
+        name: 'list_tool_names',
+        description: 'List available tool names. Much faster than search_tools when simple filtering might work. Use get_tool_definition to fetch full tool definitions for specific tools.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            server: {
+              type: 'string',
+              description: 'Filter by server name (e.g., "bash", "container") (optional)',
+            },
+            keywords: {
+              type: 'array',
+              description: 'Filter tools by keywords found anywhere in the tool name, description, or schema (optional)',
+              items: {
+                type: 'string',
+              },
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of tool names to return (default: 100)',
+            },
+          },
+        },
+      },
+      {
+        name: 'get_tool_definition',
+        description: 'Get the full definition (name, description, input schema) for a specific tool.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tool_name: {
+              type: 'string',
+              description: 'The full namespaced tool name (e.g., "bash__read_file", "container__execute")',
+            },
+          },
+          required: ['tool_name'],
+        },
+      },
+      {
         name: 'execute_tool',
-        description: 'Execute an MCP tool by name. First use search_tools to discover available tools.',
+        description: 'Execute an MCP tool by name. Use list_tool_names, search_tools, or get_tool_definition to discover available tools and their schemas first.',
         inputSchema: {
           type: 'object',
           properties: {
