@@ -38,19 +38,19 @@ export class CodeGenerator {
     await fs.mkdir(serverDir, { recursive: true });
 
     for (const tool of tools) {
-      const toolName = tool.name.replace(`${serverName}__`, '');
+      const toolName = this.sanitizeFunctionName(tool.name.replace(`${serverName}__`, ''));
       const fileName = `${toolName}.ts`;
       const filePath = path.join(serverDir, fileName);
 
       const sourceFile = this.project.createSourceFile(filePath, '', { overwrite: true });
 
       sourceFile.addImportDeclaration({
-        moduleSpecifier: '../../client.js',
+        moduleSpecifier: '../../../client.js',
         namedImports: ['callMCPTool'],
       });
 
       const inputType = this.schemaToTypeString(tool.inputSchema);
-      const outputType = tool.outputSchema 
+      const outputType = tool.outputSchema
         ? this.schemaToTypeString(tool.outputSchema)
         : 'unknown';
 
@@ -81,14 +81,19 @@ export class CodeGenerator {
 
     const indexPath = path.join(serverDir, 'index.ts');
     const indexFile = this.project.createSourceFile(indexPath, '', { overwrite: true });
-    
+
     for (const tool of tools) {
-      const toolName = tool.name.replace(`${serverName}__`, '');
+      const toolName = this.sanitizeFunctionName(tool.name.replace(`${serverName}__`, ''));
       indexFile.addExportDeclaration({
         moduleSpecifier: `./${toolName}.js`,
         namedExports: [toolName],
       });
     }
+  }
+
+  private sanitizeFunctionName(name: string): string {
+    // Replace invalid characters with underscores
+    return name.replace(/[^a-zA-Z0-9_]/g, '_');
   }
 
   private async generateIndexFile(serverNames: string[]) {
