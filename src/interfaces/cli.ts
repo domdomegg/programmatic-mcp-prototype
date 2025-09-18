@@ -39,6 +39,8 @@ class ThinkingIndicator {
 export class CLIInterface {
   private agent!: AgentCore;
   private rl!: readline.Interface;
+  private toolCallHistory: ToolCallInfo[] = [];
+  private expandedMode: boolean = false;
 
   constructor(
     private proxy: MCPProxyServer,
@@ -120,6 +122,47 @@ export class CLIInterface {
         const userInput = await this.rl.question(`${RED}${PREFIX}${RESET} You: `);
         if (!userInput.trim()) continue;
 
+        // Handle commands
+        if (userInput.trim() === '/clear') {
+          this.agent.resetConversation();
+          this.toolCallHistory = [];
+          console.log(`${GRAY}${PREFIX}${RESET} Conversation cleared\n`);
+          continue;
+        }
+
+        if (userInput.trim() === '/open') {
+          this.expandedMode = true;
+          console.log(`${GRAY}${PREFIX}${RESET} Showing full tool outputs\n`);
+          if (this.toolCallHistory.length > 0) {
+            console.log(`${GRAY}${PREFIX}${RESET} Previous tool calls:\n`);
+            this.toolCallHistory.forEach((info, index) => {
+              console.log(this.formatToolMessage(`→ Tool ${index + 1}: ${info.name}(${this.formatArgs(info.args)})`));
+
+              let outputText = '';
+              if (info.result.structuredContent) {
+                outputText = JSON.stringify(info.result.structuredContent, null, 2);
+              } else if (info.result.content[0]?.type === 'text') {
+                outputText = info.result.content[0].text;
+              }
+
+              if (outputText) {
+                const lines = this.stripAnsiCodes(outputText).split('\n');
+                lines.forEach(line => console.log(this.formatToolMessage(`  ${line}`)));
+              }
+              console.log(); // Blank line after tool result
+            });
+          } else {
+            console.log(`${GRAY}${PREFIX}${RESET} No tool calls in history\n`);
+          }
+          continue;
+        }
+
+        if (userInput.trim() === '/close') {
+          this.expandedMode = false;
+          console.log(`${GRAY}${PREFIX}${RESET} Tool outputs will be truncated\n`);
+          continue;
+        }
+
         console.log(); // Blank line after user input
         
         const thinking = new ThinkingIndicator();
@@ -132,20 +175,30 @@ export class CLIInterface {
             thinking.stop();
             process.stdout.write('\n'); // Move to new line after stopping indicator
             
+            // Store tool call in history
+            this.toolCallHistory.push(info);
+
             console.log(this.formatToolMessage(`→ Tool: ${info.name}(${this.formatArgs(info.args)})`));
-            
+
             let outputText = '';
             if (info.result.structuredContent) {
               outputText = JSON.stringify(info.result.structuredContent, null, 2);
             } else if (info.result.content[0]?.type === 'text') {
               outputText = info.result.content[0].text;
             }
-            
+
             if (outputText) {
-              const { lines, truncated } = this.truncateToolOutput(outputText);
-              lines.forEach(line => console.log(this.formatToolMessage(`  ${line}`)));
-              if (truncated) {
-                console.log(this.formatToolMessage(`  ${GRAY}[Output truncated for readability]${RESET}`));
+              if (this.expandedMode) {
+                // Show full output in expanded mode
+                const lines = this.stripAnsiCodes(outputText).split('\n');
+                lines.forEach(line => console.log(this.formatToolMessage(`  ${line}`)));
+              } else {
+                // Show truncated output in normal mode
+                const { lines, truncated } = this.truncateToolOutput(outputText);
+                lines.forEach(line => console.log(this.formatToolMessage(`  ${line}`)));
+                if (truncated) {
+                  console.log(this.formatToolMessage(`  ${GRAY}[Output truncated - use /open to see full results]${RESET}`));
+                }
               }
             }
             console.log(); // Blank line after tool results
