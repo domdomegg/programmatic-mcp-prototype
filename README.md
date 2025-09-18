@@ -1,6 +1,10 @@
-# MCP Agent - Programmatic Tool Use Prototype
+# programmatic-mcp-prototype
 
-A TypeScript implementation of an MCP-based agent with support for programmatic tool composition and skill building.
+An MCP-based agent with support for:
+- progressive tool discovery
+- programmatic tool composition
+- state persistence
+- skill building
 
 ## Architecture
 
@@ -11,7 +15,10 @@ A TypeScript implementation of an MCP-based agent with support for programmatic 
 
 ## Key Features
 
-### 1. Programmatic Tool Composition
+### 1. Progressive Tool Discovery
+The model can search for and discover tools dynamically instead of loading all tools upfront. Rather than exposing hundreds of tools at once, the agent provides `search_tools` and `execute_tool` meta-tools that allow the model to find relevant tools as needed, reducing context usage and improving response quality.
+
+### 2. Programmatic Tool Composition
 The agent can write TypeScript code that composes MCP tools together:
 
 ```typescript
@@ -26,7 +33,7 @@ for (const file of files) {
 }
 ```
 
-### 2. State Persistence
+### 3. State Persistence
 Store intermediate results and data in the workspace directory:
 
 ```typescript
@@ -40,7 +47,7 @@ await fs.writeFile('./generated/workspace/data.csv', csvData);
 const data = await fs.readFile('./generated/workspace/data.csv', 'utf-8');
 ```
 
-### 3. Skill Building
+### 4. Skill Building
 Create reusable meta-tools that combine multiple operations:
 
 ```typescript
@@ -68,7 +75,7 @@ const csvPath = await saveSheetAsCsv('abc123');
 npm install
 ```
 
-2. Configure your MCP servers in `config/servers.json`
+2. Configure your MCP servers in `config/servers.ts`
 
 3. Set your Anthropic API key:
 ```bash
@@ -87,16 +94,6 @@ docker build -t mcp-runner:latest src/servers/container-runner
 npm start
 ```
 
-### Run as MCP proxy server:
-```bash
-npm start -- --proxy
-```
-
-### Generate tool bindings:
-```bash
-npm run generate
-```
-
 ## How It Works
 
 1. **Startup**: Connects to configured MCP servers (bash, computer, container)
@@ -113,28 +110,3 @@ npm run generate
 4. **Error Handling**: Try/catch and retry logic
 5. **Efficiency**: Make many tool calls in one execution
 6. **Skills Library**: Build reusable patterns over time
-
-## Security
-
-- Code executes in isolated Docker containers
-- Network access disabled by default
-- Memory limits enforced
-- File system mounted read-only where possible
-- Timeout protection on all executions
-
-## Extending
-
-### Adding New MCP Servers
-
-1. Add to `config/servers.json`
-2. Restart to regenerate bindings
-
-### Creating Custom Skills
-
-1. Write TypeScript in `./generated/skills/`
-2. Import generated tool bindings
-3. Use in future executions
-
-### Integrating with Other Agents
-
-The proxy can run in `--proxy` mode to expose all tools as a single MCP server that other clients can connect to.
