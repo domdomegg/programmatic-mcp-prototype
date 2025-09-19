@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { randomUUID } from 'crypto';
@@ -12,7 +9,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
+import { setTimeout } from 'timers/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,6 +25,21 @@ async function ensureDockerImage() {
   if (!result.stdout.trim()) {
     console.error('Building Docker image for code execution...');
     await runDockerCommand(['build', '-t', 'mcp-runner:latest', __dirname]);
+  }
+}
+
+async function cleanupOrphanedContainers() {
+  // Find containers using our image
+  const result = await runDockerCommand(['ps', '-a', '-q', '--filter', 'ancestor=mcp-runner:latest']);
+  const containerIds = result.stdout.trim().split('\n').filter(Boolean);
+
+  if (containerIds.length > 0) {
+    console.error(`[container-runner] Found ${containerIds.length} orphaned container(s), cleaning up...`);
+    for (const id of containerIds) {
+      await runDockerCommand(['stop', id]);
+      await runDockerCommand(['rm', id]);
+    }
+    console.error('[container-runner] Orphaned containers cleaned up');
   }
 }
 
@@ -163,7 +176,7 @@ async function startLongRunningContainer(): Promise<string> {
       if (i >= maxRetries - 1) {
         throw new Error(`Failed to connect to ToolProxy after ${maxRetries} attempts: ${error}`);
       }
-      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      await setTimeout(retryDelay);
     }
   }
 
@@ -222,16 +235,6 @@ async function executeInContainer(code: string, timeout: number = 30000): Promis
   }
 }
 
-async function resetContainer() {
-  if (globalContainerId) {
-    try {
-      await runDockerCommand(['stop', globalContainerId]);
-    } catch {}
-    globalContainerId = null;
-  }
-  // Don't delete workspace folder - it contains user data
-}
-
 function runDockerCommand(args: string[], timeout: number = 30000): Promise<{
   stdout: string;
   stderr: string;
@@ -241,15 +244,17 @@ function runDockerCommand(args: string[], timeout: number = 30000): Promise<{
     const proc = spawn('docker', args);
     let stdout = '';
     let stderr = '';
-    let timedOut = false;
+    let fulfilled = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    setTimeout(timeout).then(() => {
+      if (fulfilled) {
+        return;
+      }
       proc.kill();
       // Return what we have so far instead of rejecting
       console.error(`[container-runner] Command timed out. stdout: ${stdout.substring(0, 200)}, stderr: ${stderr.substring(0, 200)}`);
       reject(new Error(`Docker command timed out. stderr: ${stderr.substring(0, 500)}`));
-    }, timeout);
+    });
 
     proc.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -260,182 +265,118 @@ function runDockerCommand(args: string[], timeout: number = 30000): Promise<{
     });
 
     proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (!timedOut) {
-        resolve({
-          stdout,
-          stderr,
-          exitCode: code || 0,
-        });
-      }
+      fulfilled = true;
+      resolve({
+        stdout,
+        stderr,
+        exitCode: code || 0,
+      });
     });
 
     proc.on('error', (err) => {
-      clearTimeout(timer);
+      fulfilled = true;
       reject(err);
     });
   });
 }
 
 async function main() {
+  await cleanupOrphanedContainers();
   await ensureDockerImage();
 
-  const server = new Server(
+  const server = new McpServer({
+    name: 'container-runner',
+    version: '1.0.0',
+  });
+
+  server.registerTool(
+    'execute',
     {
-      name: 'container-runner',
-      version: '1.0.0',
-    },
-    {
-      capabilities: {
-        tools: {},
+      description: 'Execute TypeScript code in an isolated Docker container with access to MCP tools',
+      inputSchema: {
+        code: z.string().describe(`TypeScript code to execute. Write extremely succinct code, avoid comments and unnecessary error handling. All code will be automatically prefixed with \`import * as servers from '../generated/index.js';\` so you don't need to import that yourself.`),
+        timeout: z.number().optional().default(30000).describe('Execution timeout in milliseconds'),
       },
+      outputSchema: {
+        stdout: z.string().describe('Standard output from the code execution'),
+        stderr: z.string().describe('Standard error from the code execution'),
+        exitCode: z.number().describe('Exit code of the execution (0 for success)'),
+      },
+    },
+    async ({ code, timeout }) => {
+      const result = await executeInContainer(`import * as servers from '../generated/index.js';\n` + code, timeout);
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+        structuredContent: result,
+      };
     }
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'execute',
-        description: 'Execute TypeScript code in an isolated Docker container with access to MCP tools',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            code: {
-              type: 'string',
-              description: 'TypeScript code to execute. Can import MCP tools from model_accessible_files',
-            },
-            timeout: {
-              type: 'number',
-              description: 'Execution timeout in milliseconds',
-              default: 30000,
-            },
-          },
-          required: ['code'],
-        },
+  server.registerTool(
+    'list_tools',
+    {
+      description: 'List all available MCP tools from the container proxy',
+      outputSchema: {
+        tools: z.array(z.any()).describe('Array of available MCP tools'),
       },
-      {
-        name: 'list_tools',
-        description: 'List all available MCP tools from the container proxy',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      },
-      {
-        name: 'reset',
-        description: 'Reset the container (clears all state and restarts)',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      },
-    ],
-  }));
+    },
+    async () => {
+      if (!containerProxyClient) {
+        await ensureContainer();
+      }
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    console.error(`[container-runner] Received tool call: ${request.params.name}`);
-
-    if (request.params.name === 'reset') {
-      try {
-        await resetContainer();
+      if (!containerProxyClient) {
         return {
-          content: [{ type: 'text', text: 'Container reset successfully' }],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: 'Container proxy client failed to connect' }],
           isError: true,
         };
       }
-    }
 
-    if (request.params.name === 'list_tools') {
-      try {
-        // Ensure container is running and proxy client is connected
-        if (!containerProxyClient) {
-          await ensureContainer();
-        }
-
-        if (!containerProxyClient) {
-          return {
-            content: [{ type: 'text', text: 'Container proxy client failed to connect' }],
-            isError: true,
-          };
-        }
-
-        const toolsResponse = await containerProxyClient.listTools();
-
-        const tools = toolsResponse.tools || [];
-
-        return {
-          content: [{ type: 'text', text: JSON.stringify(tools, null, 2) }],
-          structuredContent: { tools },
-        };
-      } catch (error) {
-        console.error('[container-runner] list_tools error:', error);
-        return {
-          content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
-          isError: true,
-        };
-      }
-    }
-
-    if (request.params.name !== 'execute') {
-      return {
-        content: [{ type: 'text', text: 'Unknown tool' }],
-        isError: true,
-      };
-    }
-
-    const { code, timeout = 30000 } = request.params.arguments as { code: string; timeout?: number };
-
-    try {
-      const result = await executeInContainer(code, timeout);
-
-      // Format output for Claude to see
-      let output = '';
-      if (result.stdout) {
-        output += `stdout:\n${result.stdout}\n`;
-      }
-      if (result.stderr) {
-        output += `stderr:\n${result.stderr}\n`;
-      }
-      output += `exit code: ${result.exitCode}`;
+      const toolsResponse = await containerProxyClient.listTools();
+      const result = { tools: toolsResponse.tools || [] };
 
       return {
-        content: [{ type: 'text', text: output }],
+        content: [{ type: 'text', text: JSON.stringify(result) }],
         structuredContent: result,
       };
-    } catch (error) {
-      return {
-        content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-        isError: true,
-      };
     }
-  });
+  );
 
   // Cleanup on exit
-  const cleanup = async () => {
-    console.error('[container-runner] Cleaning up...');
-    await resetContainer();
+  const cleanup = () => {
+    if (globalContainerId) {
+      console.error(`[container-runner] Cleanup for ${globalContainerId}`);
+      spawnSync('docker', ['stop', globalContainerId]);
+      spawnSync('docker', ['rm', globalContainerId]);
+    }
   };
 
-  process.on('SIGINT', async () => {
-    await cleanup();
+  process.on('SIGINT', () => {
+    cleanup();
     process.exit(0);
   });
 
-  process.on('SIGTERM', async () => {
-    await cleanup();
+  process.on('SIGTERM', () => {
+    cleanup();
     process.exit(0);
   });
 
-  // Synchronous cleanup for process exit
-  process.on('beforeExit', () => {
-    if (globalContainerId) {
-      // Best effort cleanup - can't await here
-      spawn('docker', ['stop', globalContainerId]).unref();
-    }
+  // Handle uncaught errors
+  process.on('uncaughtException', (error) => {
+    console.error('[container-runner] Uncaught exception:', error);
+    cleanup();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[container-runner] Unhandled rejection:', reason);
+    cleanup();
+    process.exit(1);
+  });
+
+  process.on('exit', () => {
+    cleanup();
   });
 
   const transport = new StdioServerTransport();

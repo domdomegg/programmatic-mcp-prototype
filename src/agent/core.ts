@@ -43,13 +43,17 @@ You CANNOT directly call tools - you must write code that imports and uses the g
 
 ## Workflow
 1. **Discover tools** using search_tools, list_tool_names, or get_tool_definition
-2. **Write TypeScript code** that imports tools from generated bindings
+2. **Write ESM TypeScript code** that imports tools from generated bindings. Write extremely succinct code, avoid comments and unnecessary error handling. All code will be automatically prefixed with \`import * as servers from '../generated/index.js';\` so you don't need to import that yourself.
 3. **Execute your code** using container__execute
 
 Example:
 \`\`\`typescript
-import * as servers from '../generated/index.js';
-const result = await servers.time.get_current_time({ timezone: 'Europe/London' });
+console.log(await servers.time.get_current_time({timezone:'Europe/London'}))
+\`\`\`
+
+Example:
+\`\`\`typescript
+console.log(await servers.bash.execute({command:'curl ipinfo.io'}))
 \`\`\`
 
 ## Special Directories

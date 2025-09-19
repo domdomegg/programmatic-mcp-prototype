@@ -1,9 +1,14 @@
 const servers: Config = {
   servers: [
     {
-      name: 'wcgw',
-      command: 'uv',
-      args: ['tool', 'run', '--python', '3.12', 'wcgw@5.4.3'],
+      name: 'filesystem',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem'],
+    },
+    {
+      name: 'bash',
+      command: 'tsx',
+      args: ['../bash-executor/index.ts'],
     },
     {
       name: 'time',
