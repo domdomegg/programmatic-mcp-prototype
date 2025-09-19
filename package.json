@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "npm run start",
     "start": "tsx src/index.ts",
     "http": "tsx src/index.ts --http",
     "proxy": "tsx src/index.ts --proxy",
@@ -12,7 +12,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.62.0",
     "@modelcontextprotocol/sdk": "^1.18.0",
-    "dockerode": "^4.0.8",
     "ts-morph": "^27.0.0",
     "zod": "^4.1.8"
   },

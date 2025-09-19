@@ -1,4 +1,4 @@
-import { MCPProxyServer } from '../mcp-proxy/server.js';
+import { MetaToolProxy } from '../mcp-proxy/meta-tool-proxy.js';
 import { AgentCore, type ToolCallInfo } from '../agent/core.js';
 import * as http from 'http';
 import { URL } from 'url';
@@ -9,11 +9,11 @@ export class HTTPInterface {
   private server!: http.Server;
 
   constructor(
-    private proxy: MCPProxyServer,
+    private metaToolProxy: MetaToolProxy,
     private config: Config,
     private port: number = 3000
   ) {
-    this.agent = new AgentCore(proxy, config);
+    this.agent = new AgentCore(metaToolProxy, config);
   }
 
   async start() {

@@ -21,7 +21,7 @@ export class FileBasedOAuthProvider implements OAuthClientProvider {
   constructor(serverName: string, redirectUrl: string = 'http://localhost:3000/oauth/callback') {
     this.serverName = serverName;
     this._redirectUrl = redirectUrl;
-    this.storageDir = path.join(process.cwd(), '.oauth', serverName);
+    this.storageDir = path.join('/model_accessible_files', '.oauth', serverName);
   }
 
   private startCallbackServer(): Promise<string> {
@@ -147,7 +147,13 @@ export class FileBasedOAuthProvider implements OAuthClientProvider {
     }
 
     try {
-      const code = await this.authorizationCodePromise;
+      // Add timeout to prevent hanging forever
+      const code = await Promise.race([
+        this.authorizationCodePromise,
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('OAuth authorization timeout')), 10000)
+        )
+      ]);
       console.error('✓ Authorization code received!');
       this.authorizationCodePromise = undefined;
       return code;

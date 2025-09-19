@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { MCPProxyServer } from '../mcp-proxy/server.js';
+import { MetaToolProxy } from '../mcp-proxy/meta-tool-proxy.js';
 import type { Config } from '../../config/servers.js';
 
 interface Message {
@@ -18,7 +18,7 @@ export class AgentCore {
   private conversation: Message[] = [];
 
   constructor(
-    private proxy: MCPProxyServer,
+    private metaToolProxy: MetaToolProxy,
     private config: Config
   ) {
     this.client = new Anthropic({
@@ -30,19 +30,36 @@ export class AgentCore {
       role: 'user',
       content: `You are an AI assistant with access to tools via MCP.
 
-Tools are namespaced as "server__toolname" (e.g., "bash__read_file", "container__execute").
+## Available Tools
+You have direct access to these 4 tools:
+1. **list_tool_names** - Fast listing of tool names (use get_tool_definition to get schemas)
+2. **search_tools** - AI-powered tool discovery (returns full tool definitions)
+3. **get_tool_definition** - Get the full schema for a specific tool
+4. **container__execute** - Execute TypeScript code in a sandboxed Docker container
 
-## Tool Discovery
-When you think you need to use tools, start by calling list_tool_names without arguments to get an overview of available tools. This returns up to 100 tool names by default. You can then use get_tool_definition to fetch full schemas for specific tools. list_tool_names or search_tools have other tool discovery mechanisms you can use.
+## Tool Execution Model
+ALL actual tool execution (bash commands, file operations, etc.) must be done by writing TypeScript code that runs in the container.
+You CANNOT directly call tools - you must write code that imports and uses the generated tool bindings.
+
+## Workflow
+1. **Discover tools** using search_tools, list_tool_names, or get_tool_definition
+2. **Write TypeScript code** that imports tools from generated bindings
+3. **Execute your code** using container__execute
+
+Example:
+\`\`\`typescript
+import * as servers from '../generated/index.js';
+const result = await servers.time.get_current_time({ timezone: 'Europe/London' });
+\`\`\`
 
 ## Special Directories
-- ${this.config.paths.workspace}: Use this to store any data, CSVs, files you create during execution
-- ${this.config.paths.skills}: Use this to build reusable TypeScript skills that compose tools
+- ${this.config.paths.workspace}: Store any data, CSVs, files you create during execution
+- ${this.config.paths.skills}: Build reusable TypeScript skills that compose tools
 
-## Programatically using tools, and building skills
-You can create TypeScript files in the skills directory that import and compose tools.
-These skills can then be executed using the container__execute tool, allowing you to build
-more complex, reusable functionality from basic tools.`,
+## Building Skills
+You can save TypeScript files to the skills directory.
+This allows you to create reusable scripts, which we call 'skills'. You can then call them later with the bash tool with tsx.
+These skills can also be imported and composed themselves, enabling complex workflows.`,
     });
   }
 
@@ -56,7 +73,7 @@ more complex, reusable functionality from basic tools.`,
     let shouldContinue = true;
 
     while (shouldContinue) {
-      const tools = this.proxy.getMetaToolSchemas();
+      const tools = this.metaToolProxy.getMetaToolSchemas();
       
       const claudeResponse = await this.client.messages.create({
         model: 'claude-sonnet-4-20250514',
@@ -80,7 +97,7 @@ more complex, reusable functionality from basic tools.`,
         for (const content of claudeResponse.content) {
           if (content.type === 'tool_use') {
             try {
-              const result = await this.proxy.handleToolCall(
+              const result = await this.metaToolProxy.handleToolCall(
                 content.name,
                 content.input
               );
@@ -128,11 +145,11 @@ more complex, reusable functionality from basic tools.`,
   }
 
   getToolSchemas() {
-    return this.proxy.getMetaToolSchemas();
+    return this.metaToolProxy.getMetaToolSchemas();
   }
 
   async callTool(name: string, args: any) {
-    return this.proxy.handleToolCall(name, args);
+    return this.metaToolProxy.handleToolCall(name, args);
   }
 
   getConversationHistory() {

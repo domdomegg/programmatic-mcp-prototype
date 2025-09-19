@@ -1,4 +1,4 @@
-import { MCPProxyServer } from '../mcp-proxy/server.js';
+import { MetaToolProxy } from '../mcp-proxy/meta-tool-proxy.js';
 import { AgentCore, type ToolCallInfo } from '../agent/core.js';
 import * as readline from 'readline/promises';
 import type { Config } from '../../config/servers.js';
@@ -43,10 +43,10 @@ export class CLIInterface {
   private expandedMode: boolean = false;
 
   constructor(
-    private proxy: MCPProxyServer,
+    private metaToolProxy: MetaToolProxy,
     private config: Config
   ) {
-    this.agent = new AgentCore(proxy, config);
+    this.agent = new AgentCore(metaToolProxy, config);
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
