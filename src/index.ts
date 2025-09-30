@@ -6,12 +6,10 @@ import { CodeGenerator } from './codegen/generator.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import config from '../model_accessible_files/config/servers.js';
 import * as fs from 'fs/promises';
 
 async function main() {
-  const configModule = await import('../config/servers.js');
-  const config = configModule.default;
-
   await fs.mkdir(config.paths.workspace, { recursive: true });
   await fs.mkdir(config.paths.skills, { recursive: true });
 
