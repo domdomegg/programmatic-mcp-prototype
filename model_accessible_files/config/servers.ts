@@ -3,7 +3,7 @@ const servers: Config = {
     {
       name: 'filesystem',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem'],
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
     },
     {
       name: 'bash',

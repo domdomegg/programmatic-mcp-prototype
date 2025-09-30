@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { MetaToolProxy } from '../mcp-proxy/meta-tool-proxy.js';
-import type { Config } from '../../config/servers.js';
+import type { Config } from '../../model_accessible_files/config/servers.js';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -56,14 +56,16 @@ Example:
 console.log(await servers.bash.execute({command:'curl ipinfo.io'}))
 \`\`\`
 
-## Special Directories
-- ${this.config.paths.workspace}: Store any data, CSVs, files you create during execution
-- ${this.config.paths.skills}: Build reusable TypeScript skills that compose tools
+Example:
+\`\`\`typescript
+await servers.filesystem.write_file({path:'output/test.txt',content:'Hello World'})
+console.log(await servers.filesystem.read_text_file({path:'skills/README.md'}))
+\`\`\`
 
 ## Building Skills
 You can save TypeScript files to the skills directory.
 This allows you to create reusable scripts, which we call 'skills'. You can then call them later with the bash tool with tsx.
-These skills can also be imported and composed themselves, enabling complex workflows.`,
+These skills can also be imported and composed themselves, enabling complex workflows. See skills/README.md for more info.`,
     });
   }
 
